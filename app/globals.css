@@ -1251,6 +1251,125 @@ tbody tr:hover {
   flex-direction: column;
   gap: 3px;
 }
+
+/* Markdown de las respuestas de EPA.
+   Todo va bajo .md para no tocar el resto del dashboard. */
+.md {
+  overflow-wrap: anywhere;
+}
+/* La burbuja ya trae su padding: el Markdown no debe sumar márgenes
+   colgando arriba ni abajo. */
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0 0 7px;
+}
+/* EPA agrupa con ### ("Línea Amarilla"). A 13px, un h3 de documento se
+   ve desproporcionado dentro de la burbuja: lo dejamos apenas por
+   encima del texto. */
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 12px 0 5px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+.md strong {
+  font-weight: 650;
+  color: var(--ink);
+}
+/* Reafirmamos list-style porque .msg ul de arriba usa flex y conviene
+   no depender de cómo cada navegador blockifica los <li>. */
+.md ul,
+.md ol {
+  display: block;
+  margin: 0 0 7px;
+  padding-left: 17px;
+  gap: 0;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li {
+  display: list-item;
+  margin: 3px 0;
+}
+.md li > ul,
+.md li > ol {
+  margin: 3px 0 0;
+}
+/* Los IDs de activo (`SYN-SYN2026…`) llegan en backticks: que no
+   desborden la burbuja. */
+.md code {
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1em 0.32em;
+}
+.md pre {
+  margin: 0 0 7px;
+  padding: 8px 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.md pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  white-space: pre;
+}
+.md a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+.md blockquote {
+  margin: 0 0 7px;
+  padding-left: 9px;
+  border-left: 2px solid var(--line-2);
+  color: var(--ink-2);
+}
+.md hr {
+  margin: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+/* display:block deja que una tabla ancha scrollee dentro de la burbuja
+   en vez de ensanchar el panel del chat. */
+.md table {
+  display: block;
+  width: 100%;
+  margin: 0 0 7px;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 12px;
+}
+.md th,
+.md td {
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.md th {
+  background: var(--surface-3);
+  font-weight: 650;
+}
 .m-src {
   margin-top: 8px;
   padding-top: 7px;

@@ -5,6 +5,76 @@ interface ChatRequest {
   sessionId: string;
 }
 
+/*
+ * Claves donde n8n suele dejar la respuesta del AI Agent,
+ * en orden de preferencia.
+ */
+const REPLY_KEYS = [
+  "output",
+  "text",
+  "message",
+  "reply",
+  "json",
+  "data",
+];
+
+/*
+ * Reduce la respuesta de n8n a un string.
+ *
+ * El workflow puede devolverla de varias formas según cómo esté armado:
+ * un objeto, un array de un elemento, o envuelta en `json`. Y si el nodo
+ * "Respond to Webhook" manda el texto ya serializado, llega como JSON
+ * dentro de un string.
+ *
+ * Devolver cualquier otra cosa que no sea string hace que React falle al
+ * pintar la burbuja ("Objects are not valid as a React child"), así que
+ * el corte se hace aquí y no en el componente.
+ */
+function pickReply(payload: unknown, depth = 0): string | null {
+  if (payload == null || depth > 3) {
+    return null;
+  }
+
+  if (typeof payload === "string") {
+    const text = payload.trim();
+
+    if (!text) {
+      return null;
+    }
+
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try {
+        return pickReply(JSON.parse(text), depth + 1);
+      } catch {
+        // No era JSON: es el texto que buscábamos.
+        return text;
+      }
+    }
+
+    return text;
+  }
+
+  if (Array.isArray(payload)) {
+    return pickReply(payload[0], depth + 1);
+  }
+
+  if (typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+
+    for (const key of REPLY_KEYS) {
+      if (key in record) {
+        const found = pickReply(record[key], depth + 1);
+
+        if (found) {
+          return found;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as ChatRequest;
@@ -80,11 +150,7 @@ export async function POST(request: NextRequest) {
      * }
      */
 
-    const reply =
-      data?.output ??
-      data?.text ??
-      data?.message ??
-      data?.[0]?.output;
+    const reply = pickReply(data);
 
     if (!reply) {
       console.error("Respuesta inesperada de n8n:", data);

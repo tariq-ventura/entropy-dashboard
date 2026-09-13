@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import MarkdownMessage from "@/components/MarkdownMessage";
 import { hace, num } from "@/lib/format";
 
 import type {
@@ -354,7 +355,17 @@ export default function EpaChat({
             className={`msg ${message.from}`}
             key={message.id}
           >
-            {message.text}
+            {/*
+              * Solo EPA escribe en Markdown. El mensaje del usuario se
+              * deja como texto plano: si lo pasáramos por el parser,
+              * quien escriba "*urgente*" vería cursiva en su propio
+              * mensaje.
+              */}
+            {message.from === "bot" ? (
+              <MarkdownMessage text={message.text} />
+            ) : (
+              message.text
+            )}
 
             {message.items?.length ? (
               <ul>
