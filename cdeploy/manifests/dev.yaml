@@ -1,4 +1,4 @@
-piVersion: serving.knative.dev/v1
+apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: entropy-ssr-development
