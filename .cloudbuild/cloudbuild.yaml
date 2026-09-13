@@ -1,0 +1,48 @@
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE 
+
+steps:
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'print-info'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Build: $BUILD_ID | TAG: $SHORT_SHA | Branch: $BRANCH_NAME"    
+  
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'pull-latest'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        docker pull "${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:latest" || true
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+    args:
+      - 'build'
+      - '--cache-from=${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:latest'
+      - '--build-arg=BUILDKIT_INLINE_CACHE=1'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:latest'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA'
+      - '.'
+    timeout: '1200s'
+    waitFor:
+      - 'pull-latest'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-latest'
+    args: ['push', '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:latest']
+    waitFor: ['build-image']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-sha'
+    args: ['push', '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA']
+    waitFor: ['build-image']
+
