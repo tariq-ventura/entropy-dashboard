@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { hace, num, pct } from "@/lib/format";
+import { hace, num } from "@/lib/format";
+
 import type {
   DashboardSummary,
   SyncConflict,
@@ -9,8 +10,6 @@ import type {
   UnifiedEquipment,
   UnifiedRequest,
 } from "@/lib/types";
-
-type Topic = "disponibles" | "pendientes" | "conflictos" | "sync" | "otro";
 
 interface Message {
   id: number;
@@ -20,35 +19,21 @@ interface Message {
   source?: string;
 }
 
-const CHIPS: { topic: Topic; label: string }[] = [
-  { topic: "disponibles", label: "Equipos disponibles" },
-  { topic: "pendientes", label: "Peticiones pendientes" },
-  { topic: "conflictos", label: "Conflictos abiertos" },
-  { topic: "sync", label: "Estado de sincronización" },
+const CHIPS = [
+  "Equipos disponibles",
+  "Peticiones pendientes",
+  "Conflictos abiertos",
+  "Estado de sincronización",
 ];
 
-function classify(text: string): Topic {
-  const value = text.toLowerCase();
-  if (/disponib|libre/.test(value)) return "disponibles";
-  if (/pendient|petici|solicit/.test(value)) return "pendientes";
-  if (/conflict|discrepan|inconsist/.test(value)) return "conflictos";
-  if (/sync|sincron|actualiz/.test(value)) return "sync";
-  return "otro";
-}
-
-/**
- * EPA no llama a ningún modelo: responde calculando sobre los datos que el
- * panel ya trajo del API. Cada respuesta cita su fuente y su antigüedad.
- */
 export default function EpaChat({
   summary,
   sync,
-  equipmentSample,
-  requestSample,
-  conflicts,
 }: {
   summary: DashboardSummary;
   sync: SyncState;
+
+  // Se mantienen para no romper el componente padre.
   equipmentSample: UnifiedEquipment[];
   requestSample: UnifiedRequest[];
   conflicts: SyncConflict[];
@@ -56,111 +41,205 @@ export default function EpaChat({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(false);
+
   const nextId = useRef(1);
   const logRef = useRef<HTMLDivElement>(null);
+  const sessionId = useRef<string>("");
 
   const source = () => `proyección · ${hace(sync.lastSucceededAt)}`;
 
+  /*
+   * Creamos un sessionId por pestaña.
+   *
+   * Esto permite que n8n mantenga contexto de la conversación
+   * cuando posteriormente conectes una memoria al AI Agent.
+   */
+  useEffect(() => {
+    let id = sessionStorage.getItem("epa-session-id");
+
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem("epa-session-id", id);
+    }
+
+    sessionId.current = id;
+  }, []);
+
+  /*
+   * Mensaje inicial.
+   *
+   * Se mantiene usando los datos que ya tiene el dashboard,
+   * por lo que no es necesario llamar a n8n solamente para
+   * mostrar el saludo.
+   */
   useEffect(() => {
     if (messages.length > 0) return;
+
     setMessages([
       {
         id: 0,
         from: "bot",
-        text: `La proyección tiene ${num(summary.equipmentTotal)} equipos, ${num(
+        text: `La proyección tiene ${num(
+          summary.equipmentTotal,
+        )} equipos, ${num(
           summary.requestsPending,
-        )} peticiones pendientes y ${num(summary.conflicts)} conflictos sin conciliar.`,
+        )} peticiones pendientes y ${num(
+          summary.conflicts,
+        )} conflictos sin conciliar.`,
         source: source(),
       },
     ]);
-    // Solo para el saludo inicial: no debe reescribirse en cada refresco.
+
+    // Solo para el saludo inicial.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.equipmentTotal]);
 
+  /*
+   * Scroll automático cuando aparece un mensaje nuevo.
+   */
   useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [messages]);
+    logRef.current?.scrollTo({
+      top: logRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages, loading]);
 
-  const answer = (topic: Topic): Omit<Message, "id" | "from"> => {
-    switch (topic) {
-      case "disponibles": {
-        const free = equipmentSample.filter((item) => item.available);
-        return {
-          text: `Hay ${num(summary.equipmentAvailable)} equipos disponibles de ${num(
-            summary.equipmentTotal,
-          )} (${pct(summary.equipmentAvailable, summary.equipmentTotal)} %).`,
-          items: free
-            .slice(0, 5)
-            .map(
-              (item) =>
-                `${item.assetNumber ?? item.equipmentKey} — ${item.type || "sin tipo"}${
-                  item.linked ? "" : " · sin correlación con Startrack"
-                }`,
-            ),
-          source: source(),
-        };
+  /*
+   * Obtiene o crea el sessionId.
+   *
+   * El fallback existe por si el usuario logra enviar un mensaje
+   * antes de que el primer useEffect termine de ejecutarse.
+   */
+  const getSessionId = () => {
+    if (sessionId.current) {
+      return sessionId.current;
+    }
+
+    let id = sessionStorage.getItem("epa-session-id");
+
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem("epa-session-id", id);
+    }
+
+    sessionId.current = id;
+
+    return id;
+  };
+
+  /*
+   * Envía el mensaje al backend de Next.js.
+   *
+   * El navegador NO habla directamente con n8n.
+   *
+   * Browser
+   *   ↓
+   * /api/chat
+   *   ↓
+   * n8n
+   *   ↓
+   * AI Agent
+   *   ↓
+   * MCP
+   */
+  const ask = async (text: string) => {
+    const value = text.trim();
+
+    if (!value || loading) {
+      return;
+    }
+
+    const userMessage: Message = {
+      id: nextId.current++,
+      from: "me",
+      text: value,
+    };
+
+    setMessages((previous) => [
+      ...previous,
+      userMessage,
+    ]);
+
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          message: value,
+          sessionId: getSessionId(),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            `El chat respondió con HTTP ${response.status}`,
+        );
       }
-      case "pendientes": {
-        const pending = requestSample.filter((item) => /pendiente/i.test(item.status));
-        return {
-          text: `${num(summary.requestsPending)} peticiones en estado pendiente.`,
-          items: pending
-            .slice(0, 5)
-            .map(
-              (item) =>
-                `${item.type || "equipo"} para ${item.project || "obra sin nombre"} · solicita ${
-                  item.requester || "—"
-                }`,
-            ),
-          source: source(),
-        };
+
+      if (!data.reply) {
+        throw new Error(
+          "El servidor no devolvió una respuesta.",
+        );
       }
-      case "conflictos": {
-        const byField = new Map<string, number>();
-        for (const conflict of conflicts) {
-          const key = conflict.field || "—";
-          byField.set(key, (byField.get(key) ?? 0) + 1);
-        }
-        return {
-          text: `${num(summary.conflicts)} conflictos entre Prisma y Startrack. Los de tipo "missing" significan que la unidad existe en una sola fuente: hasta conciliarla no entra en las recomendaciones.`,
-          items: [...byField.entries()].map(([field, count]) => `${field}: ${count}`),
-          source: source(),
-        };
-      }
-      case "sync":
-        return {
-          text: `El último ciclo terminó en ${sync.status} ${hace(sync.lastSucceededAt)}.${
-            sync.lastError ? ` Último error: ${sync.lastError}` : " Sin errores registrados."
-          }`,
-          items: [
-            `Equipos: ${num(sync.equipmentCount)}`,
-            `Peticiones: ${num(sync.requestCount)}`,
-            `Asignaciones: ${num(sync.assignmentCount)}`,
-            `Mantenimientos: ${num(sync.maintenanceCount)}`,
-          ],
-          source: source(),
-        };
-      default:
-        return {
-          text: "Puedo responder sobre equipos disponibles, peticiones pendientes, conflictos de integración y estado de sincronización — todo calculado sobre lo que este panel ya trajo del API.",
-        };
+
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: nextId.current++,
+          from: "bot",
+          text: data.reply,
+          source: "EPA · n8n",
+        },
+      ]);
+    } catch (error) {
+      console.error(
+        "Error comunicándose con EPA:",
+        error,
+      );
+
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: nextId.current++,
+          from: "bot",
+          text:
+            "No pude comunicarme con EPA en este momento. " +
+            "Intenta nuevamente.",
+        },
+      ]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const ask = (topic: Topic, label: string) => {
-    const reply = answer(topic);
-    setMessages((previous) => [
-      ...previous,
-      { id: nextId.current++, from: "me", text: label },
-      { id: nextId.current++, from: "bot", ...reply },
-    ]);
-  };
-
+  /*
+   * Botón flotante cuando el chat está cerrado.
+   */
   if (!open) {
-    const alert = summary.conflicts > 0 || summary.requestsPending > 0;
+    const alert =
+      summary.conflicts > 0 ||
+      summary.requestsPending > 0;
+
     return (
-      <button className="epa-fab" onClick={() => setOpen(true)} aria-expanded={false}>
-        <span className="epa-orb" aria-hidden="true">
+      <button
+        className="epa-fab"
+        onClick={() => setOpen(true)}
+        aria-expanded={false}
+      >
+        <span
+          className="epa-orb"
+          aria-hidden="true"
+        >
           <svg
             width="14"
             height="14"
@@ -174,16 +253,31 @@ export default function EpaChat({
             <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
         </span>
+
         Preguntar a EPA
-        {alert ? <span className="badge">!</span> : null}
+
+        {alert ? (
+          <span className="badge">!</span>
+        ) : null}
       </button>
     );
   }
 
   return (
-    <section className="epa-panel" aria-label="EPA, asistente de flota">
+    <section
+      className="epa-panel"
+      aria-label="EPA, asistente de flota"
+    >
+      {/* Header */}
       <header className="epa-head">
-        <span className="epa-orb" style={{ width: 32, height: 32 }} aria-hidden="true">
+        <span
+          className="epa-orb"
+          style={{
+            width: 32,
+            height: 32,
+          }}
+          aria-hidden="true"
+        >
           <svg
             width="16"
             height="16"
@@ -195,20 +289,54 @@ export default function EpaChat({
             strokeLinejoin="round"
           >
             <path d="M12 3v3" />
-            <rect x="4" y="6" width="16" height="12" rx="3" />
-            <circle cx="9" cy="12" r="1.4" fill="#fff" stroke="none" />
-            <circle cx="15" cy="12" r="1.4" fill="#fff" stroke="none" />
+
+            <rect
+              x="4"
+              y="6"
+              width="16"
+              height="12"
+              rx="3"
+            />
+
+            <circle
+              cx="9"
+              cy="12"
+              r="1.4"
+              fill="#fff"
+              stroke="none"
+            />
+
+            <circle
+              cx="15"
+              cy="12"
+              r="1.4"
+              fill="#fff"
+              stroke="none"
+            />
           </svg>
         </span>
+
         <div>
-          <div className="epa-name">EPA</div>
+          <div className="epa-name">
+            EPA
+          </div>
+
           <div className="epa-status">
-            Leyendo {num(summary.equipmentTotal)} equipos y {num(summary.conflicts)} conflictos
+            {loading
+              ? "Consultando…"
+              : `Leyendo ${num(
+                  summary.equipmentTotal,
+                )} equipos y ${num(
+                  summary.conflicts,
+                )} conflictos`}
           </div>
         </div>
+
         <button
           className="ghost-btn"
-          style={{ marginLeft: "auto" }}
+          style={{
+            marginLeft: "auto",
+          }}
           onClick={() => setOpen(false)}
           aria-label="Cerrar chat de EPA"
         >
@@ -216,48 +344,97 @@ export default function EpaChat({
         </button>
       </header>
 
-      <div className="epa-log" ref={logRef}>
+      {/* Mensajes */}
+      <div
+        className="epa-log"
+        ref={logRef}
+      >
         {messages.map((message) => (
-          <div className={`msg ${message.from}`} key={message.id}>
+          <div
+            className={`msg ${message.from}`}
+            key={message.id}
+          >
             {message.text}
+
             {message.items?.length ? (
               <ul>
                 {message.items.map((item) => (
-                  <li key={item}>{item}</li>
+                  <li key={item}>
+                    {item}
+                  </li>
                 ))}
               </ul>
             ) : null}
-            {message.source ? <div className="m-src">{message.source}</div> : null}
+
+            {message.source ? (
+              <div className="m-src">
+                {message.source}
+              </div>
+            ) : null}
           </div>
         ))}
+
+        {loading ? (
+          <div className="msg bot">
+            EPA está consultando…
+          </div>
+        ) : null}
       </div>
 
+      {/* Preguntas rápidas */}
       <div className="epa-chips">
-        {CHIPS.map((chip) => (
-          <button key={chip.topic} className="epa-chip" onClick={() => ask(chip.topic, chip.label)}>
-            {chip.label}
+        {CHIPS.map((label) => (
+          <button
+            key={label}
+            className="epa-chip"
+            onClick={() => {
+              void ask(label);
+            }}
+            disabled={loading}
+          >
+            {label}
           </button>
         ))}
       </div>
 
+      {/* Input */}
       <form
         className="epa-input"
         onSubmit={(event) => {
           event.preventDefault();
+
           const value = draft.trim();
-          if (!value) return;
+
+          if (!value || loading) {
+            return;
+          }
+
           setDraft("");
-          ask(classify(value), value);
+
+          void ask(value);
         }}
       >
         <input
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="Pregunta sobre equipos, peticiones o conflictos…"
+          onChange={(event) =>
+            setDraft(event.target.value)
+          }
+          placeholder={
+            loading
+              ? "EPA está consultando…"
+              : "Pregunta sobre equipos, peticiones o conflictos…"
+          }
           aria-label="Mensaje para EPA"
           autoComplete="off"
+          disabled={loading}
         />
-        <button className="epa-send" type="submit" aria-label="Enviar">
+
+        <button
+          className="epa-send"
+          type="submit"
+          aria-label="Enviar"
+          disabled={loading}
+        >
           <svg
             width="16"
             height="16"

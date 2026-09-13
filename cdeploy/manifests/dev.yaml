@@ -32,6 +32,8 @@ spec:
         env:
         - name: ENTROPY_API_URL
           value: https://mcp-server-development-534053084464.us-east4.run.app
+        - name: N8N_CHAT_URL
+          value: http://n8n.entropy.local/webhook/EPA
         - name: ENTROPY_API_KEY
           valueFrom:
             secretKeyRef:
