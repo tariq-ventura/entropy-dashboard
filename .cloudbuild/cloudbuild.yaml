@@ -46,3 +46,24 @@ steps:
     args: ['push', '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA']
     waitFor: ['build-image']
 
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'sh'
+    args:
+      - -c 
+      - | 
+          echo "Applying Cloud Deploy pipeline definition from clouddeploy.yaml..."
+          gcloud deploy apply --file=cdeploy/clouddeploy.yaml \
+            --region=${_REGION} \
+            --project="${_PROJECT_ID}"
+          echo "Cloud Deploy pipeline definition applied successfully."
+
+          gcloud deploy releases create "re-${BUILD_ID}" \
+            --project="${_PROJECT_ID}" \
+            --region="${_REGION}" \
+            --delivery-pipeline="${_DELIVERY_PIPELINE}" \
+            --images="container-image-dev=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:${SHORT_SHA}" \
+            --source="./" \
+            --annotations="commitId=${REVISION_ID}" \
+            --skaffold-file="cdeploy/skaffold.yaml" \
+            --description="Cloud Build triggered release for commit ${SHORT_SHA}"
+    id: 'Create Cloud Deploy Release'

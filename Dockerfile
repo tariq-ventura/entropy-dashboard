@@ -42,7 +42,6 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup -g 1001 -S nodejs \
     && adduser -S nextjs -u 1001
 
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # standalone ya trae su propio server.js y solo las dependencias en uso.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 # Los assets estáticos quedan fuera del bundle standalone: van aparte.
