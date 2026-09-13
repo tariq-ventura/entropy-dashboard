@@ -27,6 +27,8 @@ steps:
       - 'build'
       - '--cache-from=${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:latest'
       - '--build-arg=BUILDKIT_INLINE_CACHE=1'
+      - '--build-arg=NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${_NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}'
+      - '--build-arg=NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=${_NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID}'
       - '-t'
       - '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_DEV_REPOSITORY}/${_IMAGE_NAME}:latest'
       - '-t'
